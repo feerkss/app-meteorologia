@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clima • App</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <canvas id="particles"></canvas>
+  <div class="app">
+    <header class="header">
+      <h1 class="logo">MeteoPlus</h1>
+
+      <div class="search-block">
+        <div class="search-top">
+          <div class="search">
+            <input id="cityInput" type="text" placeholder="Buscar ciudad, ej: Viña del Mar">
+            <button id="searchBtn">Buscar</button>
+          </div>
+          <div class="small-hint">Introduce ciudad y presiona Buscar o Enter</div>
+        </div>
+      </div>
+    </header>
+
+    <main class="main">
+      <div class="container-right">
+        <section class="current card">
+          <div id="loader" class="loader hidden">Cargando...</div>
+          <div id="weatherResult" class="weather-result hidden"></div>
+        </section>
+
+        <!-- Los 5 días van debajo del área de resultado (stacked) -->
+        <section class="daily card hidden" id="dailySection">
+          <h3>Pronóstico 5 días</h3>
+          <div class="daily-list" id="dailyList"></div>
+        </section>
+
+        <section class="hourly card hidden" id="hourlySection">
+          <h3>Pronóstico por horas</h3>
+          <div class="hourly-list" id="hourlyList"></div>
+        </section>
+
+        <footer class="attribution">
+          Datos provistos por Open-Meteo • Iconos simples según condiciones
+        </footer>
+      </div>
+    </main>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script>
+    // Partículas en canvas - versión robusta
+    (function(){
+      try{
+        const canvas = document.getElementById('particles');
+        if(!canvas) return;
+        const ctx = canvas.getContext('2d');
+        let particles = [];
+        const opts = {count:90, maxVel:0.8, size:2.6};
+
+        function resize(){
+          const dpr = window.devicePixelRatio || 1;
+          canvas.width = Math.floor(window.innerWidth * dpr);
+          canvas.height = Math.floor(window.innerHeight * dpr);
+          canvas.style.width = window.innerWidth + 'px';
+          canvas.style.height = window.innerHeight + 'px';
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        function init(){
+          particles = [];
+          for(let i=0;i<opts.count;i++){
+            particles.push({
+              x:Math.random()*window.innerWidth,
+              y:Math.random()*window.innerHeight,
+              vx:(Math.random()-0.5)*opts.maxVel,
+              vy:(Math.random()-0.5)*opts.maxVel,
+              r:Math.random()*opts.size + 0.8
+            });
+          }
+        }
+
+        function draw(){
+          ctx.clearRect(0,0,canvas.width,canvas.height);
+
+          // optional subtle background overlay for smoother look
+          // ctx.fillStyle = 'rgba(0,0,0,0.02)';
+          // ctx.fillRect(0,0,canvas.width,canvas.height);
+
+          for(const p of particles){
+            p.x += p.vx; p.y += p.vy;
+            if(p.x < -30) p.x = window.innerWidth + 30;
+            if(p.x > window.innerWidth + 30) p.x = -30;
+            if(p.y < -30) p.y = window.innerHeight + 30;
+            if(p.y > window.innerHeight + 30) p.y = -30;
+
+            ctx.beginPath();
+            ctx.fillStyle = 'rgba(255,255,255,0.75)';
+            ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+            ctx.fill();
+          }
+          requestAnimationFrame(draw);
+        }
+
+        init();
+        draw();
+      }catch(e){
+        console.error('Error partículas:', e);
+      }
+    })();
+  </script>
+</body>
+</html>
