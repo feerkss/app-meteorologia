@@ -12,13 +12,13 @@ Aplicación web moderna de clima usando **Open-Meteo API** (gratuita, sin key).
 - Responsive/mobile.
 
 ## Archivos
-```
+````
 .
 ├── index.html     # Estructura + particles canvas
 ├── css/style.css  # Estilos modernos, temas, animaciones
 ├── js/app.js      # Lógica API, render, geoloc
 └── README.md      # Este archivo
-```
+````
 
 ## Cómo ejecutar
 1. Abre terminal en `c:/Users/RSmar/OneDrive/Desktop/app meteorologia`
