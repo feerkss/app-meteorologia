@@ -65,13 +65,30 @@ function changeBackgroundByCode(code){
   root.setProperty('--particle-color', particleColor);
 }
 
+async function retryFetch(fn, maxRetries = 3) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (i === maxRetries - 1) throw err;
+      await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+    }
+  }
+}
+
 async function getCoordinates(city){
-  const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=es&format=json`;
-  const res = await fetch(url);
+  const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=3&language=es&format=json`;
+  const res = await retryFetch(() => fetch(url));
   if(!res.ok) throw new Error('Error geocoding');
   const data = await res.json();
   if(!data.results || data.results.length===0) throw new Error('Ciudad no encontrada');
-  return {lat: data.results[0].latitude, lon: data.results[0].longitude, name: data.results[0].name, country: data.results[0].country};
+  
+  // Prefer Chile for Santiago
+  let best = data.results[0];
+  if (city.toLowerCase().includes('santiago') && data.results.find(r => r.country === 'Chile')) {
+    best = data.results.find(r => r.country === 'Chile');
+  }
+  return {lat: best.latitude, lon: best.longitude, name: best.name, country: best.country};
 }
 
 async function getWeather(lat, lon){
@@ -81,17 +98,31 @@ async function getWeather(lat, lon){
     longitude: lon,
     timezone: 'auto',
     current_weather: 'true',
-    hourly: 'temperature_2m,weathercode',
-    daily: 'temperature_2m_max,temperature_2m_min,weathercode',
+    hourly: 'temperature_2m,relative_humidity_2m,precipitation,weathercode',
+    daily: 'temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode,uv_index_max',
     forecast_days: '7'
   });
   const url = `https://api.open-meteo.com/v1/forecast?${params.toString()}`;
-  const res = await fetch(url);
+  const res = await retryFetch(() => fetch(url));
   if(!res.ok) throw new Error('Error obteniendo clima');
   return res.json();
 }
 
-function renderCurrent(name, country, current){
+async function getCurrentLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('Geolocalización no soportada'));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+      (err) => reject(new Error('Error de ubicación: ' + err.message))
+    );
+  });
+}
+
+function renderCurrent(name, country, current_weather){
+  const current = current_weather;
   const mapped = mapWeather(current.weathercode);
   result.innerHTML = `
     <div class="weather-header">
@@ -99,10 +130,10 @@ function renderCurrent(name, country, current){
       <div>
         <div style="display:flex;align-items:center;gap:8px">
           <h2 style="margin:0">${name}, ${country || ''}</h2>
-          <div class="${tempBadgeClass(current.temperature)}">${current.temperature}°C</div>
+          <div class="${tempBadgeClass(current.temperature)}">${Math.round(current.temperature)}°C</div>
         </div>
-        <div class="weather-desc">${mapped.text} • Viento ${current.windspeed} km/h</div>
-        <div class="weather-meta">Última actualización: ${new Date(current.time).toLocaleString()}</div>
+        <div class="weather-desc">${mapped.text} • Viento ${Math.round(current.windspeed)} km/h</div>
+        <div class="weather-meta">Actualizado: ${new Date(current.time).toLocaleString('es-ES', {hour:'2-digit', minute:'2-digit'})}</div>
       </div>
     </div>
   `;
@@ -110,10 +141,10 @@ function renderCurrent(name, country, current){
 
 function renderHourly(hourly, timezone){
   hourlyList.innerHTML = '';
-  const times = hourly.time; // array ISO strings
+  const times = hourly.time;
   const temps = hourly.temperature_2m;
+  const hums = hourly['relative_humidity_2m'];
   const codes = hourly.weathercode;
-  // Mostrar próximas 24 horas (o las que haya)
   const now = new Date();
   for(let i=0;i<times.length;i++){
     const t = new Date(times[i]);
@@ -122,9 +153,11 @@ function renderHourly(hourly, timezone){
     const icon = mapWeather(codes[i]).icon;
     const el = document.createElement('div');
     el.className = 'hour-item';
-    el.innerHTML = `<div style="font-size:13px;color:var(--muted)">${t.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
-                    <div style="font-size:20px;margin:6px 0">${icon}</div>
-                    <div class="hour-temp">${Math.round(temps[i])}°C</div>`;
+    el.innerHTML = `
+      <div style="font-size:12px;color:var(--muted)">${t.toLocaleTimeString([], {hour:'2-digit'})}</div>
+      <div style="font-size:22px;margin:4px 0">${icon}</div>
+      <div class="hour-temp">${Math.round(temps[i])}°</div>
+      <div style="font-size:11px;color:var(--muted)">${hums[i]?.toFixed(0)}%</div>`;
     hourlyList.appendChild(el);
   }
 }
@@ -158,6 +191,45 @@ function renderDaily(daily){
   }
 }
 
+const geoBtn = document.getElementById('geoBtn');
+const recentList = document.getElementById('recentList');
+
+if (geoBtn) {
+  geoBtn.addEventListener('click', async () => {
+    loader.classList.remove('hidden');
+    result.classList.add('hidden');
+    hourlySection.classList.add('hidden');
+    dailySection.classList.add('hidden');
+    try {
+      const coords = await getCurrentLocation();
+      const data = await getWeather(coords.lat, coords.lon);
+      const cityName = `${Math.round(coords.lat)},${Math.round(coords.lon)}`;
+renderCurrent(cityName, '', data.current_weather);
+      if (data.hourly) {
+        renderHourly(data.hourly);
+        hourlySection.classList.remove('hidden');
+      }
+      if (data.daily) {
+        renderDaily(data.daily);
+        dailySection.classList.remove('hidden');
+      }
+      changeBackgroundByCode(data.current.weathercode);
+      loader.classList.add('hidden');
+      showMain();
+      result.classList.remove('hidden');
+    } catch (err) {
+      loader.classList.add('hidden');
+      showMain();
+      result.innerHTML = `<div style="padding:12px">❌ ${err.message}</div>`;
+      result.classList.remove('hidden');
+    }
+  });
+}
+
+function showMain() {
+  document.querySelector('.header').style.flex = '0 0 auto';
+  document.querySelector('.main').style.display = 'flex';
+}
 btn.addEventListener('click', async ()=>{
   const city = input.value.trim();
   if(!city){
@@ -175,7 +247,8 @@ btn.addEventListener('click', async ()=>{
     const coords = await getCoordinates(city);
     const data = await getWeather(coords.lat, coords.lon);
     // current
-    renderCurrent(coords.name, coords.country, data.current_weather);
+renderCurrent(coords.name, coords.country, data.current_weather);
+    changeBackgroundByCode(data.current_weather.weathercode);
     // hourly
     if(data.hourly){
       renderHourly(data.hourly, data.timezone);
@@ -187,15 +260,31 @@ btn.addEventListener('click', async ()=>{
     }
 
     loader.classList.add('hidden');
+    showMain();
     result.classList.remove('hidden');
   }catch(err){
     loader.classList.add('hidden');
+    showMain();
     result.classList.remove('hidden');
     hourlySection.classList.add('hidden');
     dailySection.classList.add('hidden');
     result.innerHTML = `<div style="padding:12px">❌ ${err.message}</div>`;
   }
 });
+
+// Theme toggle
+const themeBtn = document.getElementById('themeBtn');
+if (themeBtn) {
+  const currentTheme = localStorage.getItem('theme') || 'light';
+  document.documentElement.setAttribute('data-theme', currentTheme);
+  themeBtn.textContent = currentTheme === 'dark' ? '☀️' : '🌙';
+  themeBtn.addEventListener('click', () => {
+    const newTheme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', newTheme);
+    localStorage.setItem('theme', newTheme);
+    themeBtn.textContent = newTheme === 'dark' ? '☀️' : '🌙';
+  });
+}
 
 // Permitir presionar Enter
 input.addEventListener('keyup',(e)=>{if(e.key==='Enter')btn.click()});
